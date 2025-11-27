@@ -140,3 +140,53 @@ exports.checkinToday = async (req, res) => {
     });
   }
 };
+
+// 取得指定日期的出席清單
+exports.getAttendancesByDate = async (req, res) => {
+    try {
+      const pool = await sql.connect(config);
+  
+      let { date } = req.query;
+  
+      // 如果沒帶 date，就預設今天（格式：YYYY-MM-DD）
+      if (!date) {
+        const today = new Date();
+        date = today.toISOString().slice(0, 10); // 例如 "2025-11-26"
+      }
+  
+      const result = await pool.request()
+        .input('date', sql.Date, date)
+        .query(`
+          SELECT
+            a.id,
+            a.member_id,
+            a.[date],
+            a.checked_in_at,
+            a.with_meal,
+            a.source,
+            m.name,
+            m.dharma_name,
+            m.gender,
+            m.phone,
+            m.telephone,
+            m.[group],
+            m.role,
+            m.status,
+            m.barcode
+          FROM attendances AS a
+          JOIN members AS m
+            ON a.member_id = m.id
+          WHERE a.[date] = @date
+          ORDER BY a.checked_in_at ASC, a.id ASC
+        `);
+  
+      // 沒出席紀錄就回傳 []，前端自己判斷「今日無出席」
+      res.json(result.recordset);
+    } catch (err) {
+      console.error('取得出席清單失敗:', err);
+      res.status(500).json({
+        message: '伺服器錯誤，無法取得出席清單',
+        error: err.message
+      });
+    }
+  };

@@ -8,7 +8,6 @@ const SALT_ROUNDS = 10;
 function ensureAdmin(req, res) {
   const { role } = req.body;
   if (!req.body || role !== 'admin') {
-    console.log('role= ', role)
     res.status(403).json({ message: '需要管理員權限' });
     return false;
   }
@@ -126,7 +125,6 @@ exports.updateUser = async (req, res) => {
 
     const { id } = req.params;
     const { username, password, role } = req.body;
-    console.log(password)
 
     const pool = await sql.connect(config);
 

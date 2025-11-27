@@ -12,7 +12,7 @@ app.get('/', (req, res) => {
 
 app.use('/api', require('./routes/authRoutes.js'));
 app.use('/api/members', require('./routes/memberRoutes'));
-app.use('/api/user', require('./routes/userRoutes'));
-app.use('/api/attendance', require('./routes/attendanceRoutes'));
+app.use('/api/users', require('./routes/userRoutes'));
+app.use('/api/attendances', require('./routes/attendanceRoutes'));
 
 app.listen(3000);
