@@ -1,10 +1,11 @@
+require('dotenv').config();
 const sql = require('mssql');
 
 const config = {
-  user: 'sa',        // 預設可用 sa
-  password: 'amitabha4818',    // sa 密碼
-  server: 'localhost',     // 本機開發
-  database: 'buddhist',
+  user: process.env.DB_USER,        // 預設可用 sa
+  password: process.env.DB_PASSWORD,    // sa 密碼
+  server: process.env.DB_SERVER,     // 本機開發
+  database: process.env.DB_DATABASE,
   options: {
     encrypt: false,        // 本地可設 false，Azure 需 true
     trustServerCertificate: true
