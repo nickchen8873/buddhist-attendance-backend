@@ -72,7 +72,7 @@ exports.checkinToday = async (req, res) => {
     }
 
     // 4. 實際寫入一筆新的出席紀錄
-    const withMealValue = with_meal ? 1 : 0;            // 預設 false
+    const withMealValue = (with_meal === false) ? 0 : 1;           // 預設 false
     const sourceValue = source || 'manual';             // 預設 manual（手動）
 
     const insertResult = await pool.request()
@@ -201,7 +201,7 @@ exports.updateAttendanceMeal = async (req, res) => {
     return res.status(400).json({ message: 'with_meal 欄位必填' });
   }
 
-  const withMealBit = with_meal ? 1 : 0;
+  const withMealBit = (with_meal === false) ? 0 : 1;
 
   try {
     const pool = await sql.connect(config);
@@ -274,6 +274,148 @@ exports.deleteAttendance = async (req, res) => {
     console.error('deleteAttendance error:', err);
     return res.status(500).json({
       message: '伺服器錯誤，無法刪除出席紀錄',
+      error: err.message
+    });
+  }
+};
+
+// POST /api/checkin
+// body 可以是：
+// 1) { member_id, with_meal?, source? }
+// 2) { barcode, with_meal?, source? }
+// 3) { keyword, with_meal?, source? } // 姓名 / 法名 / 手機後三碼
+exports.checkin = async (req, res) => {
+  let { member_id, barcode, keyword, with_meal, source } = req.body;
+  const pool = await sql.connect(config);
+
+  try {
+    // 1. 先解析要報到的 member_id
+    let targetMemberId = member_id ? Number(member_id) : null;
+
+    // 1-1. 如果沒有 member_id，試著用 barcode 找
+    if (!targetMemberId && barcode) {
+      const result = await pool.request()
+        .input('barcode', sql.NVarChar, barcode)
+        .query(`
+          SELECT TOP 2 id, name, dharma_name, phone
+          FROM members
+          WHERE barcode = @barcode
+        `);
+
+      if (!result.recordset.length) {
+        return res.status(404).json({ message: '找不到對應的 barcode 成員' });
+      }
+      if (result.recordset.length > 1) {
+        return res.status(400).json({ message: '相同 barcode 有多筆成員，請聯繫管理員處理' });
+      }
+      targetMemberId = result.recordset[0].id;
+    }
+
+    // 1-2. 如果沒有 member_id / barcode，但有 keyword，就用姓名 / 法名 / 手機後三碼搜尋
+    if (!targetMemberId && keyword) {
+      const kw = String(keyword).trim();
+
+      const result = await pool.request()
+        .input('kw', sql.NVarChar, `%${kw}%`)
+        .input('kwPhone', sql.NVarChar, kw)
+        .query(`
+          SELECT TOP 3 id, name, dharma_name, phone
+          FROM members
+          WHERE status = 'active'
+            AND (
+              name LIKE @kw
+              OR dharma_name LIKE @kw
+              OR RIGHT(phone, 3) = @kwPhone
+            )
+        `);
+
+      if (!result.recordset.length) {
+        return res.status(404).json({ message: '找不到符合關鍵字的成員' });
+      }
+      if (result.recordset.length > 1) {
+        // 你之後如果想支援「多筆讓前端選一個」可以改這邊
+        return res.status(400).json({
+          message: '有多位成員符合此關鍵字，請輸入更完整的姓名或法名或手機後三碼'
+        });
+      }
+
+      targetMemberId = result.recordset[0].id;
+    }
+
+    // 1-3. 仍然沒有 member_id，就算錯誤
+    if (!targetMemberId) {
+      return res.status(400).json({
+        message: '請提供 member_id、barcode 或 keyword 其中一種資訊'
+      });
+    }
+
+    // 2. 準備一些欄位
+    const today = todayStart(); // 你 utils/date 裡已經有
+    const now = formatNow();
+    const withMealBit = (with_meal === false) ? 0 : 1;
+    const sourceValue = source || 'manual';
+
+    // 3.（可選）先檢查今天是否已報到
+    const dupCheck = await pool.request()
+      .input('member_id', sql.Int, targetMemberId)
+      .input('date', sql.Date, now)
+      .query(`
+        SELECT id
+        FROM attendances
+        WHERE member_id = @member_id
+          AND date = @date
+      `);
+
+    if (dupCheck.recordset.length) {
+      return res.status(409).json({ message: '今日已報到，請勿重複報到' });
+    }
+
+    // 4. 寫入 attendances
+    const insertResult = await pool.request()
+      .input('member_id', sql.Int, targetMemberId)
+      .input('date', sql.Date, now)
+      .input('checked_in_at', sql.DateTime, now)
+      .input('with_meal', sql.Bit, withMealBit)
+      .input('source', sql.NVarChar, sourceValue)
+      .query(`
+        INSERT INTO attendances (member_id, date, checked_in_at, with_meal, source)
+        VALUES (@member_id, @date, @checked_in_at, @with_meal, @source);
+        SELECT SCOPE_IDENTITY() AS id;
+      `);
+
+    const newId = insertResult.recordset[0].id;
+
+    // 5. 把剛寫入那筆完整資料（含 member 資訊）查回給前端
+    const detail = await pool.request()
+      .input('id', sql.Int, newId)
+      .query(`
+        SELECT 
+          a.*,
+          m.name,
+          m.dharma_name,
+          m.[group],
+          m.role,
+          m.status,
+          m.barcode
+        FROM attendances AS a
+        JOIN members AS m ON a.member_id = m.id
+        WHERE a.id = @id
+      `);
+
+    return res.status(201).json({
+      message: '報到成功',
+      attendance: detail.recordset[0]
+    });
+  } catch (err) {
+    console.error('checkin error:', err);
+
+    // 如果你有 UNIQUE(member_id, date) 的 constraint，這裡也防一下
+    if (err.number === 2627 || err.number === 2601) {
+      return res.status(409).json({ message: '今日已報到，請勿重複報到' });
+    }
+
+    return res.status(500).json({
+      message: '伺服器錯誤，報到失敗',
       error: err.message
     });
   }

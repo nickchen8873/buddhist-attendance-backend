@@ -11,9 +11,9 @@ router.get('/', attendanceController.getAttendancesByDate);
 // 切換用餐 / 不用餐：PATCH /api/attendances/:id
 // body: { with_meal: true/false }
 router.patch('/:id', attendanceController.updateAttendanceMeal);
-
 // 取消出席（移回「本次活動可設定成員」）：DELETE /api/attendances/:id
 router.delete('/:id', attendanceController.deleteAttendance);
-
+// 依 member_id / barcode / keyword 報到
+router.post('/checkin', attendanceController.checkin);
 
 module.exports = router;

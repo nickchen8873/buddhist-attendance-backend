@@ -91,13 +91,56 @@ exports.getMemberById = async (req, res) => {
   }
 };
 
+// 產生一個指定長度的隨機數字字串（例如 10 碼）
+function generateRandomDigits(length = 10) {
+  const chars = '0123456789';
+  let code = '';
+  for (let i = 0; i < length; i++) {
+    code += chars[Math.floor(Math.random() * chars.length)];
+  }
+  return code;
+}
+
+// 在 DB 裡確保唯一的 barcode
+async function generateUniqueBarcode(pool, length = 10) {
+  while (true) {
+    const candidate = generateRandomDigits(length);
+
+    const check = await pool.request()
+      .input('barcode', sql.NVarChar, candidate)
+      .query('SELECT 1 AS existsFlag FROM members WHERE barcode = @barcode');
+
+    if (check.recordset.length === 0) {
+      // 沒撞到就用這組
+      return candidate;
+    }
+    // 撞到了就再 loop 一次，重新產生
+  }
+}
+
 // 新增成員
 exports.createMember = async (req, res) => {
   try {
-    const { name, dharma_name, gender, phone, birthday, address, status, group, role, telephone, remark} = req.body;
+    const {
+      name,
+      dharma_name,
+      gender,
+      phone,
+      birthday,
+      address,
+      status,
+      group,
+      role,
+      telephone,
+      remark
+    } = req.body;
+
     const pool = await sql.connect(config);
-    
+
     const userId = req.user?.id || null; // 從 JWT 取出當前登入使用者的 id
+
+    // 產生一個在 DB 中未被使用的 barcode
+    const barcode = await generateUniqueBarcode(pool, 10); // 這裡改長度也可以
 
     const result = await pool.request()
       .input('name', sql.VarChar, name)
@@ -113,15 +156,31 @@ exports.createMember = async (req, res) => {
       .input('remark', sql.VarChar, remark)
       .input('created_at', sql.DateTime, formatNow())
       .input('created_by', sql.Int, userId)
-      .query(`INSERT INTO members 
-        (name, dharma_name, gender, phone, birthday, address, status, role, [group], telephone, remark, created_at)
-        VALUES (@name, @dharma_name, @gender, @phone, @birthday, @address, @status, @role, @group, @telephone, @remark, @created_at)
-        SELECT SCOPE_IDENTITY() AS id;`);
-    res.json({ id: result.recordset[0].id });
+      .input('barcode', sql.NVarChar, barcode)
+      .query(`
+        INSERT INTO members 
+          (name, dharma_name, gender, phone, birthday, address, status, role, [group], telephone, remark, created_at, barcode)
+        VALUES 
+          (@name, @dharma_name, @gender, @phone, @birthday, @address, @status, @role, @group, @telephone, @remark, @created_at, @barcode);
+        SELECT SCOPE_IDENTITY() AS id;
+      `);
+
+    res.json({
+      id: result.recordset[0].id,
+      barcode // 你之後若想直接在前端顯示 / 產 QR，可以用到
+    });
   } catch (err) {
+    // 如果是 UNIQUE(barcode) 撞到（極小機率），也幫你翻成易懂訊息
+    if (err.number === 2627 || err.number === 2601) {
+      return res.status(500).json({
+        error: 'Barcode 產生重複，請重試一次（若持續發生請通知開發者）'
+      });
+    }
+
     res.status(500).json({ error: err.message });
   }
 };
+
 
 // 更新成員
 exports.updateMember = async (req, res) => {
