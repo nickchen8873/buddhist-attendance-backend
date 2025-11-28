@@ -190,3 +190,91 @@ exports.getAttendancesByDate = async (req, res) => {
       });
     }
   };
+
+  // PATCH /api/attendances/:id
+// 切換 with_meal (true <-> false)
+exports.updateAttendanceMeal = async (req, res) => {
+  const { id } = req.params;
+  const { with_meal } = req.body;
+
+  if (typeof with_meal === 'undefined') {
+    return res.status(400).json({ message: 'with_meal 欄位必填' });
+  }
+
+  const withMealBit = with_meal ? 1 : 0;
+
+  try {
+    const pool = await sql.connect(config);
+
+    // 先確認這筆出席是否存在
+    const existed = await pool.request()
+      .input('id', sql.Int, id)
+      .query('SELECT * FROM attendances WHERE id = @id');
+
+    if (!existed.recordset.length) {
+      return res.status(404).json({ message: 'Attendance not found' });
+    }
+
+    // 更新 with_meal
+    await pool.request()
+      .input('id', sql.Int, id)
+      .input('with_meal', sql.Bit, withMealBit)
+      .query(`
+        UPDATE attendances
+        SET with_meal = @with_meal
+        WHERE id = @id;
+      `);
+
+    // 把更新後的完整資料（含 member 資訊）撈回去給前端
+    const result = await pool.request()
+      .input('id', sql.Int, id)
+      .query(`
+        SELECT a.*, m.name, m.dharma_name, m.[group], m.role, m.status, m.barcode
+        FROM attendances AS a
+        JOIN members AS m ON a.member_id = m.id
+        WHERE a.id = @id
+      `);
+
+    return res.json({
+      message: 'with_meal 已更新',
+      attendance: result.recordset[0]
+    });
+  } catch (err) {
+    console.error('updateAttendanceMeal error:', err);
+    return res.status(500).json({
+      message: '伺服器錯誤，無法更新 with_meal',
+      error: err.message
+    });
+  }
+};
+
+// DELETE /api/attendances/:id
+// 取消今日出席（讓成員回到「本次活動可設定成員」欄）
+exports.deleteAttendance = async (req, res) => {
+  const { id } = req.params;
+
+  try {
+    const pool = await sql.connect(config);
+
+    // 先確認是否存在
+    const existed = await pool.request()
+      .input('id', sql.Int, id)
+      .query('SELECT * FROM attendances WHERE id = @id');
+
+    if (!existed.recordset.length) {
+      return res.status(404).json({ message: 'Attendance not found' });
+    }
+
+    await pool.request()
+      .input('id', sql.Int, id)
+      .query('DELETE FROM attendances WHERE id = @id');
+
+    return res.json({ message: 'Attendance 已刪除' });
+  } catch (err) {
+    console.error('deleteAttendance error:', err);
+    return res.status(500).json({
+      message: '伺服器錯誤，無法刪除出席紀錄',
+      error: err.message
+    });
+  }
+};
