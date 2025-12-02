@@ -36,7 +36,7 @@ exports.checkinToday = async (req, res) => {
     } else {
       // 用 barcode 找 member
       const result = await pool.request()
-        .input('barcode', sql.Char, barcode)
+        .input('barcode', sql.NVarChar, barcode)
         .query(`
           SELECT id, name, dharma_name, barcode
           FROM members
@@ -283,7 +283,7 @@ exports.deleteAttendance = async (req, res) => {
 // body 可以是：
 // 1) { member_id, with_meal?, source? }
 // 2) { barcode, with_meal?, source? }
-// 3) { keyword, with_meal?, source? } // 姓名 / 法名 / 手機後三碼
+// 3) { keyword, with_meal?, source? } // 姓名 / 法名 / 手機後三碼 / 條碼
 exports.checkin = async (req, res) => {
   let { member_id, barcode, keyword, with_meal, source } = req.body;
   const pool = await sql.connect(config);
@@ -292,10 +292,10 @@ exports.checkin = async (req, res) => {
     // 1. 先解析要報到的 member_id
     let targetMemberId = member_id ? Number(member_id) : null;
 
-    // 1-1. 如果沒有 member_id，試著用 barcode 找
+    // 1-1. 如果沒有 member_id，先試著用 barcode 找（for 專用條碼欄位）
     if (!targetMemberId && barcode) {
       const result = await pool.request()
-        .input('barcode', sql.NVarChar, barcode)
+        .input('barcode', sql.NVarChar, String(barcode).trim())
         .query(`
           SELECT TOP 2 id, name, dharma_name, phone
           FROM members
@@ -311,29 +311,30 @@ exports.checkin = async (req, res) => {
       targetMemberId = result.recordset[0].id;
     }
 
-    // 1-2. 如果沒有 member_id / barcode，但有 keyword，就用姓名 / 法名 / 手機後三碼搜尋
+    // 1-2. 如果沒有 member_id / barcode，但有 keyword，就用姓名 / 法名 / 手機後三碼 / barcode 搜尋
     if (!targetMemberId && keyword) {
       const kw = String(keyword).trim();
 
-      const result = await pool.request()
-        .input('kw', sql.NVarChar, `%${kw}%`)
-        .input('kwPhone', sql.NVarChar, kw)
-        .query(`
-          SELECT TOP 3 id, name, dharma_name, phone
-          FROM members
-          WHERE status = 'active'
-            AND (
-              name LIKE @kw
-              OR dharma_name LIKE @kw
-              OR RIGHT(phone, 3) = @kwPhone
-            )
-        `);
+      const request = pool.request()
+        .input('kwLike', sql.NVarChar, `%${kw}%`)
+        .input('kwExact', sql.NVarChar, kw);
+
+      const result = await request.query(`
+        SELECT TOP 3 id, name, dharma_name, phone, barcode
+        FROM members
+        WHERE status = 'active'
+          AND (
+            name LIKE @kwLike
+            OR dharma_name LIKE @kwLike
+            OR RIGHT(phone, 3) = @kwExact
+            OR barcode like @kwExact       -- ✅ 支援 keyword 當成條碼精準比對
+          )
+      `);
 
       if (!result.recordset.length) {
-        return res.status(404).json({ message: '找不到符合關鍵字的成員' });
+        return res.status(500).json({ message: '找不到符合關鍵字的成員' });
       }
       if (result.recordset.length > 1) {
-        // 你之後如果想支援「多筆讓前端選一個」可以改這邊
         return res.status(400).json({
           message: '有多位成員符合此關鍵字，請輸入更完整的姓名或法名或手機後三碼'
         });
@@ -350,12 +351,12 @@ exports.checkin = async (req, res) => {
     }
 
     // 2. 準備一些欄位
-    const today = todayStart(); // 你 utils/date 裡已經有
-    const now = formatNow();
+    // const today = todayStart();      // 建議回傳 "YYYY-MM-DD" 或 "YYYY-MM-DD 00:00:00.000"
+    const now = formatNow();         // datetime
     const withMealBit = (with_meal === false) ? 0 : 1;
     const sourceValue = source || 'manual';
 
-    // 3.（可選）先檢查今天是否已報到
+    // 3. 先檢查今天是否已報到（用 date 欄位）
     const dupCheck = await pool.request()
       .input('member_id', sql.Int, targetMemberId)
       .input('date', sql.Date, now)
@@ -363,7 +364,7 @@ exports.checkin = async (req, res) => {
         SELECT id
         FROM attendances
         WHERE member_id = @member_id
-          AND date = @date
+          AND [date] = @date
       `);
 
     if (dupCheck.recordset.length) {
@@ -373,12 +374,12 @@ exports.checkin = async (req, res) => {
     // 4. 寫入 attendances
     const insertResult = await pool.request()
       .input('member_id', sql.Int, targetMemberId)
-      .input('date', sql.Date, now)
+      .input('date', sql.Date, now)       // ✅ date 存今天的 date
       .input('checked_in_at', sql.DateTime, now)
       .input('with_meal', sql.Bit, withMealBit)
       .input('source', sql.NVarChar, sourceValue)
       .query(`
-        INSERT INTO attendances (member_id, date, checked_in_at, with_meal, source)
+        INSERT INTO attendances (member_id, [date], checked_in_at, with_meal, source)
         VALUES (@member_id, @date, @checked_in_at, @with_meal, @source);
         SELECT SCOPE_IDENTITY() AS id;
       `);
@@ -409,7 +410,7 @@ exports.checkin = async (req, res) => {
   } catch (err) {
     console.error('checkin error:', err);
 
-    // 如果你有 UNIQUE(member_id, date) 的 constraint，這裡也防一下
+    // UNIQUE(member_id, date) 的 constraint 也順便防一下
     if (err.number === 2627 || err.number === 2601) {
       return res.status(409).json({ message: '今日已報到，請勿重複報到' });
     }

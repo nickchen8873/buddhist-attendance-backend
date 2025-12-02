@@ -203,7 +203,7 @@ const memberInfo = await pool.request()
 
 // 方式2: 透過 barcode
 const memberInfo = await pool.request()
-  .input('barcode', sql.Char, barcode)
+  .input('barcode', sql.NVarChar, barcode)
   .query('SELECT id, name, dharma_name, barcode FROM members WHERE barcode = @barcode');
 ```
 
