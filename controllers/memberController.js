@@ -91,6 +91,12 @@ exports.getMemberById = async (req, res) => {
   }
 };
 
+function normalizeDate(v) {
+  if (v === '' || v == null) return null;
+  const d = new Date(v);
+  return Number.isNaN(d.getTime()) ? null : d;
+}
+
 // 在 DB 裡確保唯一的 barcode
 async function generateUniqueBarcode(pool) {
   while (true) {
@@ -139,7 +145,7 @@ exports.createMember = async (req, res) => {
       .input('dharma_name', sql.VarChar, dharma_name)
       .input('gender', sql.Char, gender)
       .input('phone', sql.VarChar, phone)
-      .input('birthday', sql.Date, birthday)
+      .input('birthday', sql.Date, normalizeDate(birthday))
       .input('address', sql.VarChar, address)
       .input('status', sql.VarChar, status)
       .input('group', sql.VarChar, group)
@@ -189,12 +195,12 @@ exports.updateMember = async (req, res) => {
       .input('dharma_name', sql.VarChar, dharma_name)
       .input('gender', sql.Char, gender)
       .input('phone', sql.VarChar, phone)
-      .input('birthday', sql.Date, birthday)
+      .input('birthday', sql.Date, normalizeDate(birthday))
       .input('address', sql.VarChar, address)
       .input('status', sql.VarChar, status)
       .input('group', sql.VarChar, group)
       .input('role', sql.VarChar, role)
-      .input('leave_date', sql.Date, leave_date)
+      .input('leave_date', sql.Date, normalizeDate(leave_date))
       .input('telephone', sql.Char, telephone)
       .input('remark', sql.VarChar, remark)
       .input('updated_at', sql.DateTime, formatNow())
