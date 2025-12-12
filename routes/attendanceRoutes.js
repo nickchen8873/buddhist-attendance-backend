@@ -16,4 +16,9 @@ router.delete('/:id', attendanceController.deleteAttendance);
 // 依 member_id / barcode / keyword 報到
 router.post('/checkin', attendanceController.checkin);
 
+// 上週同日出席名單
+router.get(
+    '/last-week', attendanceController.getLastWeekSameDayList
+  );
+
 module.exports = router;

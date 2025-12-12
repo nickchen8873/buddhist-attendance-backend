@@ -4,56 +4,59 @@ const { formatNow, todayStart } = require('../utils/date');
 
 exports.checkinToday = async (req, res) => {
   const { member_id, barcode, with_meal, source } = req.body;
+  const { guest_name, guest_type } = req.body; // 匿名報到用
 
   try {
-    if (!member_id && !barcode) {
-      return res.status(400).json({
-        message: 'member_id 或 barcode 至少要提供一個'
-      });
-    }
+    // 先註解掉，讓匿名報到可以正常運作
+    // if (!member_id && !barcode) {
+    //   return res.status(400).json({
+    //     message: 'member_id 或 barcode 至少要提供一個'
+    //   });
+    // }
 
     const pool = await sql.connect(config);
 
-    // 1. 先找出 member id
-    let memberId;
-    let memberInfo;
+    // 先註解掉，讓匿名報到可以正常運作
+    // // 1. 先找出 member id
+    // let memberId;
+    // let memberInfo;
 
-    if (member_id) {
-      const result = await pool.request()
-        .input('id', sql.Int, member_id)
-        .query(`
-          SELECT id, name, dharma_name, barcode
-          FROM members
-          WHERE id = @id
-        `);
+    // if (member_id) {
+    //   const result = await pool.request()
+    //     .input('id', sql.Int, member_id)
+    //     .query(`
+    //       SELECT id, name, dharma_name, barcode
+    //       FROM members
+    //       WHERE id = @id
+    //     `);
 
-      if (!result.recordset.length) {
-        return res.status(404).json({ message: 'Member not found' });
-      }
+    //   if (!result.recordset.length) {
+    //     return res.status(500).json({ message: 'Member not found' });
+    //   }
 
-      memberInfo = result.recordset[0];
-      memberId = memberInfo.id;
-    } else {
-      // 用 barcode 找 member
-      const result = await pool.request()
-        .input('barcode', sql.NVarChar, barcode)
-        .query(`
-          SELECT id, name, dharma_name, barcode
-          FROM members
-          WHERE barcode = @barcode
-        `);
+    //   memberInfo = result.recordset[0];
+    //   memberId = memberInfo.id;
+    // } else {
+    //   // 用 barcode 找 member
+    //   const result = await pool.request()
+    //     .input('barcode', sql.NVarChar, barcode)
+    //     .query(`
+    //       SELECT id, name, dharma_name, barcode
+    //       FROM members
+    //       WHERE barcode = @barcode
+    //     `);
 
-      if (!result.recordset.length) {
-        return res.status(404).json({ message: '查無此條碼對應的成員' });
-      }
+    //   if (!result.recordset.length) {
+    //     return res.status(404).json({ message: '查無此條碼對應的成員' });
+    //   }
 
-      memberInfo = result.recordset[0];
-      memberId = memberInfo.id;
-    }
+    //   memberInfo = result.recordset[0];
+    //   memberId = memberInfo.id;
+    // }
 
     // 3. 檢查「今天是否已報到」
     const existed = await pool.request()
-      .input('member_id', sql.Int, memberId)
+      .input('member_id', sql.Int, member_id)
       .input('date', sql.Date, formatNow())  // SQL Server 的 DATE 只會存日期部分
       .query(`
         SELECT TOP 1 a.*, m.name, m.dharma_name, m.barcode
@@ -75,38 +78,62 @@ exports.checkinToday = async (req, res) => {
     const withMealValue = (with_meal === false) ? 0 : 1;           // 預設 false
     const sourceValue = source || 'manual';             // 預設 manual（手動）
 
-    const insertResult = await pool.request()
-      .input('member_id', sql.Int, memberId)
-      .input('date', sql.Date, formatNow())
-      .input('checked_in_at', sql.DateTime, formatNow())
-      .input('with_meal', sql.Bit, withMealValue)
-      .input('source', sql.NVarChar(16), sourceValue)
-      .query(`
-        INSERT INTO attendances (member_id, [date], checked_in_at, with_meal, source)
-        VALUES (@member_id, @date, @checked_in_at, @with_meal, @source);
-        SELECT SCOPE_IDENTITY() AS id;
-      `);
+    // A. 正式成員
+    if (member_id) {
+      const insertResult = await pool.request()
+        .input('member_id', sql.Int, member_id)
+        .input('date', sql.Date, formatNow())
+        .input('checked_in_at', sql.DateTime, formatNow())
+        .input('with_meal', sql.Bit, withMealValue)
+        .input('source', sql.NVarChar(16), sourceValue)
+        .query(`
+          INSERT INTO attendances (member_id, [date], checked_in_at, with_meal, source)
+          VALUES (@member_id, @date, @checked_in_at, @with_meal, @source);
+          SELECT SCOPE_IDENTITY() AS id;
+        `);
 
-    const insertedId = insertResult.recordset[0].id;
+      const insertedId = insertResult.recordset[0].id;
 
-    // 5. 把剛剛插入的完整資料撈出來（順便帶 member 資料，前端比較好用）
-    const inserted = await pool.request()
-      .input('id', sql.Int, insertedId)
-      .query(`
-        SELECT a.*, m.name, m.dharma_name, m.barcode
-        FROM attendances AS a
-        JOIN members AS m ON a.member_id = m.id
-        WHERE a.id = @id
-      `);
+      // 5. 把剛剛插入的完整資料撈出來（順便帶 member 資料，前端比較好用）
+      const inserted = await pool.request()
+        .input('id', sql.Int, insertedId)
+        .query(`
+          SELECT a.*, m.name, m.dharma_name, m.barcode
+          FROM attendances AS a
+          JOIN members AS m ON a.member_id = m.id
+          WHERE a.id = @id
+        `);
+      
+      return res.status(201).json({
+        message: '報到成功',
+        duplicated: false,
+        attendance: inserted.recordset[0]
+      });
+    } 
+    // B. 匿名報到
+    else if (guest_name) {
+      const pool = await sql.connect(config);
+      const result = await pool.request()
+        .input('member_id', sql.Int, null)
+        .input('with_meal', sql.Bit, with_meal)
+        .input('source', sql.NVarChar, source || 'guest')
+        .input('guest_name', sql.NVarChar, guest_name)
+        .input('guest_type', sql.NVarChar, guest_type || null)
+        .query(`
+          INSERT INTO attendances (member_id, with_meal, source, guest_name, guest_type, checked_in_at, date)
+          VALUES (@member_id, @with_meal, @source, @guest_name, @guest_type, GETDATE(), GETDATE());
+          SELECT SCOPE_IDENTITY() AS id;
+        `);
 
-    return res.status(201).json({
-      message: '報到成功',
-      duplicated: false,
-      attendance: inserted.recordset[0]
-    });
+      return res.status(201).json({ id: result.recordset[0].id });
+    }
+    // C. 兩者都沒有
+    else {
+      return res.status(400).json({ error: 'member_id 或 guest_name 必須至少有一個' });
+    }
 
   } catch (err) {
-    // 若觸發 UNIQUE(member_id, date)，也當成「重複報到」
+    // 若觸發 UNIQUE(guest_name, date)，也當成「重複報到」
     if (err.number === 2627 || err.number === 2601) {
       try {
         const pool = await sql.connect(config);
@@ -164,6 +191,8 @@ exports.getAttendancesByDate = async (req, res) => {
             a.checked_in_at,
             a.with_meal,
             a.source,
+            a.guest_name,
+            a.guest_type,
             m.name,
             m.dharma_name,
             m.gender,
@@ -174,7 +203,7 @@ exports.getAttendancesByDate = async (req, res) => {
             m.status,
             m.barcode
           FROM attendances AS a
-          JOIN members AS m
+          LEFT JOIN members AS m
             ON a.member_id = m.id
           WHERE a.[date] = @date
           ORDER BY a.checked_in_at ASC, a.id ASC
@@ -419,5 +448,87 @@ exports.checkin = async (req, res) => {
       message: '伺服器錯誤，報到失敗',
       error: err.message
     });
+  }
+};
+
+/**
+ * GET /api/attendance/last-week?date=YYYY-MM-DD
+ * 給定 date，查詢「date - 7 天」那一天的出席名單（join 成員資料）
+ */
+exports.getLastWeekSameDayList = async (req, res) => {
+  try {
+    let { date } = req.query;
+
+    // 若沒給 date，就預設用今天
+    if (!date) {
+      const today = new Date();
+      date = today.toISOString().slice(0, 10); // YYYY-MM-DD
+    }
+
+    // 1) 檢查是否為未來日期（只比較日期，不比較時間）
+    const now = new Date();
+    const inputDate = new Date(date);
+    // 檢查是否為未來日期
+    if (inputDate.setHours(0,0,0,0) > now.setHours(0,0,0,0)) {
+      return res.status(400).json({
+        error: 'Date cannot be in the future',
+      });
+    }
+    
+    // 2) 格式檢查：YYYY-MM-DD
+    const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
+    if (!dateRegex.test(date)) {
+      return res.status(400).json({
+        error: 'Invalid date format, expected YYYY-MM-DD',
+      });
+    }
+
+    // 3) 無效日期檢查（例如 2025-02-30）
+    const baseDate = new Date(date);
+    if (Number.isNaN(baseDate.getTime())) {
+      return res
+        .status(400)
+        .json({ error: "Invalid date value" });
+    }
+
+    // 計算上週同一天
+    baseDate.setDate(baseDate.getDate() - 7);
+    const lastWeekDate = baseDate.toISOString().slice(0, 10); // YYYY-MM-DD
+
+    const pool = await sql.connect(config);
+
+    const result = await pool.request()
+      .input('targetDate', sql.Date, lastWeekDate)
+      .query(`
+        SELECT
+          a.id                    AS attendance_id,
+          a.member_id,
+          CAST(a.[date] AS date) AS date, -- 報到日期欄位（如果叫別的名字，改這行）
+          a.checked_in_at,                               -- 若有報到時間欄位就保留，沒有可刪掉
+          m.name,
+          m.dharma_name,
+          m.gender,
+          m.[group],                                      -- 你 members 裡的「組別」欄位
+          m.role,
+          m.phone,
+          m.telephone,
+          m.address,
+          m.barcode,
+          m.status
+        FROM attendances AS a                             -- 你的報到紀錄 table 名稱
+        INNER JOIN members AS m ON a.member_id = m.id
+        WHERE CAST(a.[date] AS date) = @targetDate AND member_id IS NOT NULL
+        ORDER BY m.[group], m.name;
+      `);
+
+    res.json({
+      baseDate,                // 前端當天的日期
+      targetDate: lastWeekDate, // 真正查詢的「上週同日」
+      count: result.recordset.length,
+      data: result.recordset,
+    });
+  } catch (err) {
+    console.error('getLastWeekSameDayList error:', err);
+    res.status(500).json({ error: err.message });
   }
 };

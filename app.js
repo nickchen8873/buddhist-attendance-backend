@@ -15,4 +15,6 @@ app.use('/api/members', require('./routes/memberRoutes'));
 app.use('/api/users', require('./routes/userRoutes'));
 app.use('/api/attendances', require('./routes/attendanceRoutes'));
 
-app.listen(3000);
+//  app.listen(3000);
+
+module.exports = app;
