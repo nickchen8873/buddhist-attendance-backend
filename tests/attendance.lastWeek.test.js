@@ -4,7 +4,7 @@ const jwt = require('jsonwebtoken');
 const { sql, config } = require('../config/db');
 
 // ✅ 1. 先設定 JWT_SECRET（要和你專案裡用的一樣）
-const JWT_TEST_SECRET = process.env.JWT_SECRET || 'JWT_SECRET_FOR_TEST';
+const JWT_TEST_SECRET = process.env.JWT_SECRET || 'Amitabha' || 'JWT_SECRET_FOR_TEST';
 process.env.JWT_SECRET = JWT_TEST_SECRET;
 
 // ✅ 2. 再載入 app（這樣 app 裡的 auth middleware 會用到同一個 secret）

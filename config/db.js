@@ -2,13 +2,14 @@ require('dotenv').config();
 const sql = require('mssql');
 
 const config = {
-  user: process.env.DB_USER,        // 預設可用 sa
-  password: process.env.DB_PASSWORD,    // sa 密碼
-  server: process.env.DB_SERVER,     // 本機開發
-  database: process.env.DB_DATABASE,
+  user: process.env.DB_USER || 'sa',
+  password: process.env.DB_PASSWORD || 'Amitabha-4818',
+  server: process.env.DB_SERVER || 'localhost',
+  database: process.env.DB_DATABASE || 'buddhist',
   options: {
-    encrypt: false,        // 本地可設 false，Azure 需 true
-    trustServerCertificate: true
+    encrypt: false,
+    trustServerCertificate: true,
+    instanceName: process.env.DB_INSTANCE || 'SQLEXPRESS'
   }
 };
 

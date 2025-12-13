@@ -1,3 +1,11 @@
+require('dotenv').config();
+
+const { sql, config } = require('./config/db'); // 依你的檔名調整
+
+sql.connect(config)
+  .then(() => console.log('DB connected'))
+  .catch(err => console.error('DB connect error', err));
+
 const express = require('express');
 const cors = require('cors');
 const app = express();
@@ -15,6 +23,6 @@ app.use('/api/members', require('./routes/memberRoutes'));
 app.use('/api/users', require('./routes/userRoutes'));
 app.use('/api/attendances', require('./routes/attendanceRoutes'));
 
-//  app.listen(3000);
+// app.listen(3000);
 
 module.exports = app;

@@ -1,5 +1,5 @@
 require('dotenv').config();
-const jwtSecret = process.env.JWT_SECRET;
+const jwtSecret = process.env.JWT_SECRET || 'Amitabha';
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
 const { sql, config } = require('../config/db');
@@ -35,6 +35,8 @@ exports.login = async (req, res) => {
       role: user.role,
       last_login: new Date().toISOString()
     };
+
+    console.log('JWT_SECRET=', process.env.JWT_SECRET || 'Amitabha');
 
     const token = jwt.sign(payload, jwtSecret, { expiresIn: '1h' });
 
