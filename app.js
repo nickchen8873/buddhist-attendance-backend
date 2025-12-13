@@ -12,6 +12,7 @@ const app = express();
 
 app.use(cors());
 app.use(express.json());
+app.use(express.static('public'))
 
 // 路由 (後續新增到 routes 資料夾)
 app.get('/', (req, res) => {
