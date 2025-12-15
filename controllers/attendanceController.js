@@ -309,133 +309,146 @@ exports.deleteAttendance = async (req, res) => {
 };
 
 // POST /api/checkin
-// body 可以是：
-// 1) { member_id, with_meal?, source? }
-// 2) { barcode, with_meal?, source? }
-// 3) { keyword, with_meal?, source? } // 姓名 / 法名 / 手機後三碼 / 條碼
+// body是：
+// { keyword, with_meal?, source? } // ID / 姓名 / 法名 / 條碼
 exports.checkin = async (req, res) => {
-  let { member_id, barcode, keyword, with_meal, source } = req.body;
+  let { keyword, with_meal, source } = req.body;
   const pool = await sql.connect(config);
 
   try {
-    // 1. 先解析要報到的 member_id
-    let targetMemberId = member_id ? Number(member_id) : null;
+    const now = new Date();                     // 建議直接用 Date，避免字串轉換問題
 
-    // 1-1. 如果沒有 member_id，先試著用 barcode 找（for 專用條碼欄位）
-    if (!targetMemberId && barcode) {
-      const result = await pool.request()
-        .input('barcode', sql.NVarChar, String(barcode).trim())
-        .query(`
-          SELECT TOP 2 id, name, dharma_name, phone
-          FROM members
-          WHERE barcode = @barcode
-        `);
+    const withMealBit = (with_meal === false) ? 0 : 1;
+    const sourceValue = source || 'keyword';
 
-      if (!result.recordset.length) {
-        return res.status(404).json({ message: '找不到對應的 barcode 成員' });
-      }
-      if (result.recordset.length > 1) {
-        return res.status(400).json({ message: '相同 barcode 有多筆成員，請聯繫管理員處理' });
-      }
-      targetMemberId = result.recordset[0].id;
-    }
+    // ✅ 改成用「陣列」支援一次多筆
+    let targetMemberIds = [];
 
-    // 1-2. 如果沒有 member_id / barcode，但有 keyword，就用姓名 / 法名 / 手機後三碼 / barcode 搜尋
-    if (!targetMemberId && keyword) {
+    // 3. keyword 報到（✅姓名/法名完全相同 -> 多筆一起報到）
+    if (!targetMemberIds.length && keyword) {
       const kw = String(keyword).trim();
 
-      const request = pool.request()
-        .input('kwLike', sql.NVarChar, `%${kw}%`)
-        .input('kwExact', sql.NVarChar, kw);
+      // 3-1 先找「ID/姓名/法名/barcode完全相同」（可多筆）
+      const exactRes = await pool.request()
+        .input('kw', sql.NVarChar, kw)
+        .query(`
+          SELECT id
+          FROM members
+          WHERE status = 'active'
+            AND (TRIM(name) = @kw OR TRIM(dharma_name) = @kw OR TRIM(barcode) = @kw)
+        `);
 
-      const result = await request.query(`
-        SELECT TOP 3 id, name, dharma_name, phone, barcode
-        FROM members
-        WHERE status = 'active'
-          AND (
-            name LIKE @kwLike
-            OR dharma_name LIKE @kwLike
-            OR RIGHT(phone, 3) = @kwExact
-            OR barcode like @kwExact       -- ✅ 支援 keyword 當成條碼精準比對
-          )
-      `);
-
-      if (!result.recordset.length) {
-        return res.status(500).json({ message: '找不到符合關鍵字的成員' });
+      if (exactRes.recordset.length) {
+        targetMemberIds = exactRes.recordset.map(r => r.id);
       }
-      if (result.recordset.length > 1) {
-        return res.status(400).json({
-          message: '有多位成員符合此關鍵字，請輸入更完整的姓名或法名或手機後三碼'
-        });
-      }
+      //  else {
+      //   // 3-2 找不到完全相同 -> fallback 手機後三碼
+      //   const fallbackRes = await pool.request()
+      //     .input('kw', sql.NVarChar, kw)
+      //     .query(`
+      //       SELECT TOP 2 id
+      //       FROM members
+      //       WHERE status = 'active'
+      //         AND (
+      //           RIGHT(phone, 3) = @kw
+      //         )
+      //     `);
 
-      targetMemberId = result.recordset[0].id;
+      //   if (!fallbackRes.recordset.length) {
+      //     return res.status(404).json({ message: '找不到符合關鍵字的成員' });
+      //   }
+      //   if (fallbackRes.recordset.length > 1) {
+      //     return res.status(400).json({
+      //       message: '有多位成員符合此關鍵字（手機後三碼），請輸入更完整的姓名或法名'
+      //     });
+      //   }
+      //   targetMemberIds = [fallbackRes.recordset[0].id];
+      // }
     }
 
-    // 1-3. 仍然沒有 member_id，就算錯誤
-    if (!targetMemberId) {
+    console.log("targetMemberIds:",targetMemberIds)
+
+    if (!targetMemberIds.length) {
       return res.status(400).json({
-        message: '請提供 member_id、barcode 或 keyword 其中一種資訊'
+        message: '找不到符合關鍵字的成員'
       });
     }
 
-    // 2. 準備一些欄位
-    // const today = todayStart();      // 建議回傳 "YYYY-MM-DD" 或 "YYYY-MM-DD 00:00:00.000"
-    const now = formatNow();         // datetime
-    const withMealBit = (with_meal === false) ? 0 : 1;
-    const sourceValue = source || 'manual';
+    // 去重
+    targetMemberIds = [...new Set(targetMemberIds)];
 
-    // 3. 先檢查今天是否已報到（用 date 欄位）
-    const dupCheck = await pool.request()
-      .input('member_id', sql.Int, targetMemberId)
-      .input('date', sql.Date, now)
-      .query(`
-        SELECT id
-        FROM attendances
-        WHERE member_id = @member_id
-          AND [date] = @date
-      `);
+    // 4. 先查今天已報到的（避免整批被 409 擋掉）
+    const dupReq = pool.request().input('date', sql.Date, now);
+    targetMemberIds.forEach((id, i) => dupReq.input(`id${i}`, sql.Int, id));
+    const idIn = targetMemberIds.map((_, i) => `@id${i}`).join(',');
 
-    if (dupCheck.recordset.length) {
-      return res.status(409).json({ message: '今日已報到，請勿重複報到' });
+    const dupRes = await dupReq.query(`
+      SELECT member_id
+      FROM attendances
+      WHERE [date] = @date
+        AND member_id IN (${idIn})
+    `);
+
+    const dupSet = new Set(dupRes.recordset.map(r => Number(r.member_id)));
+    const idsToInsert = targetMemberIds.filter(id => !dupSet.has(id));
+
+    // 全部都重複 -> 回 409（但不會因為其中一個重複就整批失敗）
+    if (!idsToInsert.length) {
+      return res.status(409).json({
+        message: '今日已報到，請勿重複報到',
+        duplicated_member_ids: targetMemberIds
+      });
     }
 
-    // 4. 寫入 attendances
-    const insertResult = await pool.request()
-      .input('member_id', sql.Int, targetMemberId)
-      .input('date', sql.Date, now)       // ✅ date 存今天的 date
+    // 5. 批次 INSERT（OUTPUT 回傳 inserted ids）
+    const insReq = pool.request()
+      .input('date', sql.Date, now)
       .input('checked_in_at', sql.DateTime, now)
       .input('with_meal', sql.Bit, withMealBit)
-      .input('source', sql.NVarChar, sourceValue)
-      .query(`
-        INSERT INTO attendances (member_id, [date], checked_in_at, with_meal, source)
-        VALUES (@member_id, @date, @checked_in_at, @with_meal, @source);
-        SELECT SCOPE_IDENTITY() AS id;
-      `);
+      .input('source', sql.NVarChar, sourceValue);
 
-    const newId = insertResult.recordset[0].id;
+    idsToInsert.forEach((id, i) => insReq.input(`mid${i}`, sql.Int, id));
+    const valuesSql = idsToInsert.map((_, i) =>
+      `(@mid${i}, @date, @checked_in_at, @with_meal, @source)`
+    ).join(',');
 
-    // 5. 把剛寫入那筆完整資料（含 member 資訊）查回給前端
-    const detail = await pool.request()
-      .input('id', sql.Int, newId)
-      .query(`
-        SELECT 
-          a.*,
-          m.name,
-          m.dharma_name,
-          m.[group],
-          m.role,
-          m.status,
-          m.barcode
-        FROM attendances AS a
-        JOIN members AS m ON a.member_id = m.id
-        WHERE a.id = @id
-      `);
+    const insertResult = await insReq.query(`
+      INSERT INTO attendances (member_id, [date], checked_in_at, with_meal, source)
+      OUTPUT inserted.id, inserted.member_id
+      VALUES ${valuesSql};
+    `);
 
+    const insertedAttendanceIds = insertResult.recordset.map(r => Number(r.id));
+
+    // 6. 查回完整資料（多筆）
+    const detReq = pool.request();
+    insertedAttendanceIds.forEach((id, i) => detReq.input(`aid${i}`, sql.Int, id));
+    const aidIn = insertedAttendanceIds.map((_, i) => `@aid${i}`).join(',');
+
+    const detail = await detReq.query(`
+      SELECT 
+        a.*,
+        m.name,
+        m.dharma_name,
+        m.[group],
+        m.role,
+        m.status,
+        m.barcode
+      FROM attendances AS a
+      JOIN members AS m ON a.member_id = m.id
+      WHERE a.id IN (${aidIn})
+      ORDER BY a.checked_in_at DESC
+    `);
+
+    // ✅ 向下相容：如果只有 1 筆，仍提供 attendance
+    const attendances = detail.recordset || [];
     return res.status(201).json({
-      message: '報到成功',
-      attendance: detail.recordset[0]
+      message: `報到成功：${attendances.length} 筆` + (dupSet.size ? `（已報到略過：${dupSet.size} 筆）` : ''),
+      attendance: attendances.length === 1 ? attendances[0] : null,
+      attendances,
+      duplicated_member_ids: [...dupSet]
     });
+
   } catch (err) {
     console.error('checkin error:', err);
 
@@ -450,6 +463,7 @@ exports.checkin = async (req, res) => {
     });
   }
 };
+
 
 /**
  * GET /api/attendance/last-week?date=YYYY-MM-DD
