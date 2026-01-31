@@ -29,6 +29,8 @@ exports.getAllMembers = async (req, res) => {
     // 若沒勾「顯示隱藏」，就排除 hidden
     if (!showHidden) {
       query += ` AND m.status <> 'hidden'`;
+    } else{
+      query += ` AND m.status = 'hidden'`
     }
 
     // 有群組的成員
@@ -46,20 +48,16 @@ exports.getAllMembers = async (req, res) => {
       params.push({ name: 'joinDateEnd', type: sql.Date, value: joinDateEnd });
     }
 
-    // 關鍵字搜尋：姓名 / 法號 / 手機（你要再加欄位也可以一起放）
+    // 關鍵字搜尋：姓名 / 法號（你要再加欄位也可以一起放）
     if (keyword) {
       query += `
         AND (
           m.name        LIKE @kw
           OR m.dharma_name LIKE @kw
-          OR m.phone    LIKE @phoneKw
-          OR m.[group]  LIKE @kw
-          OR m.address  LIKE @kw
-          OR m.barcode  LIKE @kw
         )
       `;
       params.push({ name: 'kw',      type: sql.NVarChar, value: `%${keyword}%` });
-      params.push({ name: 'phoneKw', type: sql.NVarChar, value: `%${keyword}%` });
+      // params.push({ name: 'phoneKw', type: sql.NVarChar, value: `%${keyword}%` });
     }
 
     // 執行查詢
