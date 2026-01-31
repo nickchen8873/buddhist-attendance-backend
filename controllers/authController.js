@@ -38,7 +38,7 @@ exports.login = async (req, res) => {
 
     console.log('JWT_SECRET=', process.env.JWT_SECRET || 'Amitabha');
 
-    const token = jwt.sign(payload, jwtSecret, { expiresIn: '4h' });
+    const token = jwt.sign(payload, jwtSecret, { expiresIn: '24h' });
 
     res.json({
       token,
