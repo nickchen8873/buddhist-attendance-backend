@@ -10,7 +10,7 @@ exports.login = async (req, res) => {
   try {
     const pool = await sql.connect(config);
     const result = await pool.request()
-      .input('username', sql.VarChar, username)
+      .input('username', sql.NVarChar, username)
       .query('SELECT * FROM users WHERE username = @username');
 
     if (result.recordset.length === 0) {
@@ -26,7 +26,7 @@ exports.login = async (req, res) => {
 
     // 更新登入時間
     await pool.request()
-      .input('username', sql.VarChar, username)
+      .input('username', sql.NVarChar, username)
       .query('UPDATE users SET last_login = GETDATE() WHERE username = @username');
 
     const payload = {
