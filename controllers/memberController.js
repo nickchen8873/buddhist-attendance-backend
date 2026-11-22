@@ -49,16 +49,28 @@ exports.getAllMembers = async (req, res) => {
     }
 
     // 關鍵字搜尋：姓名 / 法號（你要再加欄位也可以一起放）
-    if (keyword) {
-      query += `
-        AND (
-          m.name        LIKE @kw
-          OR m.dharma_name LIKE @kw
-        )
-      `;
-      params.push({ name: 'kw',      type: sql.NVarChar, value: `%${keyword}%` });
-      // params.push({ name: 'phoneKw', type: sql.NVarChar, value: `%${keyword}%` });
-    }
+	if (keyword) {
+	  query += `
+		AND (
+		  m.name LIKE @kw OR
+		  m.dharma_name LIKE @kw OR
+		  m.phone LIKE @phoneKw
+		)
+	  `;
+
+	  params.push({
+		name: 'kw',
+		type: sql.NVarChar,
+		value: `%${keyword}%`
+	  });
+
+	  params.push({
+		name: 'phoneKw',
+		type: sql.NVarChar,
+		value: `%${keyword}`
+	  });
+	}
+
 
     // 執行查詢
     const pool = await sql.connect(config);

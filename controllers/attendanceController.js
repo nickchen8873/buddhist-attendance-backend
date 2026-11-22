@@ -328,15 +328,20 @@ exports.checkin = async (req, res) => {
     if (!targetMemberIds.length && keyword) {
       const kw = String(keyword).trim();
 
-      // 3-1 先找「ID/姓名/法名/barcode完全相同」（可多筆）
-      const exactRes = await pool.request()
-        .input('kw', sql.NVarChar, kw)
-        .query(`
-          SELECT id
-          FROM members
-          WHERE status = 'active'
-            AND (TRIM(name) = @kw OR TRIM(dharma_name) = @kw OR TRIM(barcode) = @kw)
-        `);
+        // 3-1 先找「ID/姓名/法名/barcode完全相同」（可多筆）
+		const exactRes = await pool.request()
+		  .input('kw', sql.NVarChar, kw)
+		  .query(`
+			SELECT id
+			FROM members
+			WHERE status = 'active'
+			  AND (
+				(LEN(@kw) >= 2 AND CHARINDEX(@kw, name) > 0)
+				OR TRIM(name) = @kw
+				OR TRIM(dharma_name) = @kw
+				OR TRIM(barcode) = @kw
+			  )
+		  `);
 
       if (exactRes.recordset.length) {
         targetMemberIds = exactRes.recordset.map(r => r.id);
